@@ -89,14 +89,14 @@ pdiff_col     = "Point Differential"
 age_col       = "Average Age"
 exp_col       = "Playoff Experience Score"
 
-clutch_record_col  = "Record In The Clutch"
-clutch_pct_col     = "Win %.4"
+clutch_record_col  = "Clutch Games Record"
+clutch_pct_col     = "Win %..."
 
 inj_count_col      = "# Of Players Injured"
 inj_games_col      = "Total Games Missed"
 
-home_win_pct_col   = "Win %.1"
-road_win_pct_col   = "Win %.2"
+home_win_pct_col   = "Win %."
+road_win_pct_col   = "Win %.."
 
 allstars_col       = "# Of All-Stars"
 
