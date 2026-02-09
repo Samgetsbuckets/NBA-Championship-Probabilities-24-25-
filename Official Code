@@ -51,9 +51,9 @@ CLIPPERS_EXPERIENCE_BONUS   = 0.10
 
 # Point differential
 PD_WEIGHT_IN_BASE     = 0.22
-PD_RANK_TOP_BONUS     = 0.18
-PD_RANK_TOP3_BONUS    = 0.08
-PD_RANK_TOP5_BONUS    = 0.04
+PD_RANK_TOP_BONUS     = 0.25
+PD_RANK_TOP3_BONUS    = 0.10
+PD_RANK_TOP5_BONUS    = 0.05
 
 # East/West quality
 EAST_RATING_ADJ       = -0.02
@@ -163,7 +163,7 @@ df["__ClutchPct__"]=df["__ClutchPct__"].fillna(
 
 offense_z=0.5*z(df[ppg_col]) + 0.2*z(df[pace_col]) + 0.3*z(df[tpct_col])
 clutch_z =0.45*z(df["__ClutchPct__"]) + 0.10*z(df["__CG__"])
-pd_z     =z(df[pdiff_col])
+pd_z     =1*z(df[pdiff_col])
 inj_z    =0.25*z(df[inj_count_col]) + 0.45*z(df[inj_games_col])
 
 age_z=z(df[age_col])
