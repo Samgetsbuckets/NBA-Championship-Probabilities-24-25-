@@ -1,6 +1,5 @@
 # ---------------------------------------------
-#   NBA CHAMPIONSHIP SIMULATOR + LEGEND
-#   Conference-Colored Bars + Percentages Above + Legend
+#   NBA CHAMPIONSHIP SIMULATOR 2025-2026
 # ---------------------------------------------
 
 import pandas as pd
@@ -18,7 +17,7 @@ from google.colab import files
 K_MATCHUP             = 0.40
 SERIES_NOISE_SIGMA    = 0.20
 HOME_EDGE_SCALE       = 0.05
-SEED_EDGE             = 0.02
+SEED_EDGE             = 0.05   
 FINALS_WEST_BUMP      = 0.008
 
 PARITY_BLEND_WEIGHT   = 0.28
@@ -34,38 +33,27 @@ SOFT_CAP_PCT          = 18.5
 SOFT_CAP_SHRINK       = 0.78
 FLATTEN_EXPONENT      = 0.89
 
-# Team boosts
-OKC_RATING_BONUS      = 0.35
-CAVS_RATING_PENALTY   = 0.30
-MEMPHIS_NERF          = 0.60
-PACERS_BOOST          = 0.18
-PACERS_BONUS          = 0.08
+EXPERIENCE_WEIGHT = 0.12
+AGE_WEIGHT        = 0.10
 
-# Age & Experience
-EXPERIENCE_WEIGHT           = 0.12
-AGE_WEIGHT                  = 0.10
-WARRIORS_EXPERIENCE_BONUS   = 0.22
-LAKERS_EXPERIENCE_BONUS     = 0.20
-CELTICS_EXPERIENCE_BONUS    = 0.12
-CLIPPERS_EXPERIENCE_BONUS   = 0.10
+PD_WEIGHT_IN_BASE  = 0.22
+PD_RANK_TOP_BONUS  = 0.25
+PD_RANK_TOP3_BONUS = 0.10
+PD_RANK_TOP5_BONUS = 0.05
 
-# Point differential
-PD_WEIGHT_IN_BASE     = 0.22
-PD_RANK_TOP_BONUS     = 0.25
-PD_RANK_TOP3_BONUS    = 0.10
-PD_RANK_TOP5_BONUS    = 0.05
+EAST_RATING_ADJ = -0.02
+WEST_RATING_ADJ = +0.02
 
-# East/West quality
-EAST_RATING_ADJ       = -0.02
-WEST_RATING_ADJ       = +0.02
-
-# Randomness / field parity
 TEAM_STYLE_NOISE_SIG  = 0.04
 HOT_TEAMS_PER_SIM     = 2
 HOT_TEAM_BONUS        = 0.06
 
+FATIGUE_PER_GAME      = 0.015
+PLAYIN_EXTRA_FATIGUE  = 0.04
+FATIGUE_RECOVERY      = 0.01
+
 # =====================================================
-# 1) UPLOAD EXCEL
+# 1) UPLOAD FILE
 # =====================================================
 
 print("📂 Upload your NBA Excel file:")
@@ -74,10 +62,16 @@ file_name = list(uploaded.keys())[0]
 df = pd.read_excel(file_name)
 
 # =====================================================
+# CLEAN COLUMN NAMES
+# =====================================================
+
+df.columns = df.columns.str.strip()
+
+# =====================================================
 # 2) COLUMN MAPPINGS
 # =====================================================
 
-team_col      = "Playoff Teams 2024-2025"
+team_col      = "Playoff Teams 2025-2026"
 conf_col      = "Conference"
 seed_col      = "Seed"
 
@@ -92,8 +86,7 @@ exp_col       = "Playoff Experience Score"
 clutch_record_col  = "Clutch Games Record"
 clutch_pct_col     = "Win %..."
 
-inj_count_col      = "# Of Players Injured"
-inj_games_col      = "Total Games Missed"
+inj_prob_col  = "Injury Probability"
 
 home_win_pct_col   = "Win %."
 road_win_pct_col   = "Win %.."
@@ -124,7 +117,7 @@ def stable_noise(name, sigma=TEAM_STYLE_NOISE_SIG):
     return float(rng.normal(0.0,sigma))
 
 # =====================================================
-# 4) CLEAN NUMERIC COLUMNS
+# 4) CLEAN DATA
 # =====================================================
 
 df[ppg_col]=to_num(df[ppg_col])
@@ -135,10 +128,12 @@ if df[tpct_col].mean()>1:
 
 df[pdiff_col]=to_num(df[pdiff_col])
 df[age_col]=to_num(df[age_col])
-df[inj_count_col]=to_num(df[inj_count_col])
-df[inj_games_col]=to_num(df[inj_games_col])
 df[home_win_pct_col]=to_num(df[home_win_pct_col])/100.0
 df[road_win_pct_col]=to_num(df[road_win_pct_col])/100.0
+
+df[inj_prob_col]=to_num(df[inj_prob_col])
+if df[inj_prob_col].mean()>1:
+    df[inj_prob_col]/=100.0
 
 # Experience fallback
 if exp_col in df.columns:
@@ -163,79 +158,39 @@ df["__ClutchPct__"]=df["__ClutchPct__"].fillna(
 
 offense_z=0.5*z(df[ppg_col]) + 0.2*z(df[pace_col]) + 0.3*z(df[tpct_col])
 clutch_z =0.45*z(df["__ClutchPct__"]) + 0.10*z(df["__CG__"])
-pd_z     =1*z(df[pdiff_col])
-inj_z    =0.25*z(df[inj_count_col]) + 0.45*z(df[inj_games_col])
-
-age_z=z(df[age_col])
-exp_z=z(df["__Exp__"])
+pd_z     =z(df[pdiff_col])
+age_z    =z(df[age_col])
+exp_z    =z(df["__Exp__"])
 
 df["__BaseRating__"] = (
     offense_z +
     clutch_z +
     PD_WEIGHT_IN_BASE*pd_z +
     AGE_WEIGHT*(-age_z) +
-    EXPERIENCE_WEIGHT*(exp_z) -
-    0.30*inj_z
+    EXPERIENCE_WEIGHT*(exp_z)
 )
 
-# PD rank bonuses
 pd_rank=df[pdiff_col].rank(ascending=False,method="dense")
 for i in df.index:
     r=int(pd_rank.loc[i])
-    if r==1:
-        df.loc[i,"__BaseRating__"]+=PD_RANK_TOP_BONUS
-    elif r<=3:
-        df.loc[i,"__BaseRating__"]+=PD_RANK_TOP3_BONUS
-    elif r<=5:
-        df.loc[i,"__BaseRating__"]+=PD_RANK_TOP5_BONUS
+    if r==1: df.loc[i,"__BaseRating__"]+=PD_RANK_TOP_BONUS
+    elif r<=3: df.loc[i,"__BaseRating__"]+=PD_RANK_TOP3_BONUS
+    elif r<=5: df.loc[i,"__BaseRating__"]+=PD_RANK_TOP5_BONUS
 
 # =====================================================
-# 6) TEAM-SPECIFIC BOOSTS (FIXED UPPER)
+# 6) CONFERENCE + NOISE
 # =====================================================
 
-df[conf_col] = df[conf_col].astype(str).str.upper().str.strip()
+df[conf_col]=df[conf_col].astype(str).str.upper().str.strip()
 
 for i in df.index:
-    name=str(df.loc[i,team_col]).lower()
-
-    if "thunder" in name:
-        df.loc[i,"__BaseRating__"]+=OKC_RATING_BONUS
-
-    if "cavaliers" in name:
-        df.loc[i,"__BaseRating__"]-=CAVS_RATING_PENALTY
-
-    if "memphis grizzlies" in name:
-        df.loc[i,"__BaseRating__"]-=MEMPHIS_NERF
-
-    if "pacers" in name:
-        df.loc[i,"__BaseRating__"]+=PACERS_BONUS + PACERS_BOOST
-
-    if "warriors" in name:
-        df.loc[i,"__BaseRating__"]+=WARRIORS_EXPERIENCE_BONUS
-    if "lakers" in name:
-        df.loc[i,"__BaseRating__"]+=LAKERS_EXPERIENCE_BONUS
-    if "celtics" in name:
-        df.loc[i,"__BaseRating__"]+=CELTICS_EXPERIENCE_BONUS
-    if "clippers" in name:
-        df.loc[i,"__BaseRating__"]+=CLIPPERS_EXPERIENCE_BONUS
-
     conf=df.loc[i,conf_col]
     df.loc[i,"__BaseRating__"]+=(WEST_RATING_ADJ if conf=="WEST" else EAST_RATING_ADJ)
-
     df.loc[i,"__BaseRating__"]+=stable_noise(df.loc[i,team_col])
 
 # =====================================================
-# 7) BRACKET ASSEMBLY (FIXED UPPER)
+# 7) TEAM CLASS
 # =====================================================
-
-df[conf_col] = df[conf_col].astype(str).str.upper().str.strip()
-df[seed_col] = pd.to_numeric(df[seed_col], errors="coerce")
-
-df_valid=df.dropna(subset=[seed_col]).copy()
-df_valid[seed_col]=df_valid[seed_col].astype(int)
-
-east_df=df_valid[df_valid[conf_col]=="EAST"].sort_values(seed_col)
-west_df=df_valid[df_valid[conf_col]=="WEST"].sort_values(seed_col)
 
 class Team:
     def __init__(self,r):
@@ -245,14 +200,23 @@ class Team:
         self.base=float(r["__BaseRating__"])
         self.hpct=float(r[home_win_pct_col])
         self.rpct=float(r[road_win_pct_col])
-        self.inj_c=float(r[inj_count_col])
-        self.inj_g=float(r[inj_games_col])
+        self.inj_prob=float(r[inj_prob_col])
+        
+        self.fatigue = 0.0
+
+# build teams
+
+df_valid=df.dropna(subset=[seed_col]).copy()
+df_valid[seed_col]=df_valid[seed_col].astype(int)
+
+east_df=df_valid[df_valid[conf_col]=="EAST"].sort_values(seed_col)
+west_df=df_valid[df_valid[conf_col]=="WEST"].sort_values(seed_col)
 
 east={int(r[seed_col]):Team(r) for _,r in east_df.iterrows()}
 west={int(r[seed_col]):Team(r) for _,r in west_df.iterrows()}
 
 # =====================================================
-# 8) SERIES ENGINE
+# 8) ENGINE
 # =====================================================
 
 SERIES_SCHEDULE=[True,True,False,False,True,False,True]
@@ -264,12 +228,15 @@ def home_edge(a,b,a_home):
     return HOME_EDGE_SCALE*((a.hpct-b.rpct) if a_home else -(b.hpct-a.rpct))
 
 def injury_mult(t):
-    c_z=(t.inj_c-df[inj_count_col].mean())/(df[inj_count_col].std(ddof=0)+1e-9)
-    g_z=(t.inj_g-df[inj_games_col].mean())/(df[inj_games_col].std(ddof=0)+1e-9)
-    risk=1/(1+math.exp(-0.9*(0.6*c_z+0.9*g_z)))
-    mu=-INJ_MAX_DOWN*risk*0.6
-    sigma=INJ_BASE_SIGMA*(0.6+0.8*risk)
+    adj_prob=t.inj_prob**1.2
+    mu=-INJ_MAX_DOWN*adj_prob
+    sigma=INJ_BASE_SIGMA*(0.6+1.2*adj_prob)
     return float(np.clip(np.exp(np.random.normal(mu,sigma)),INJ_MULT_MIN,INJ_MULT_MAX))
+
+
+def fatigue_penalty(t):
+    return t.fatigue
+
 
 def series_prob(a,b,finals=False,hot=None):
 
@@ -278,8 +245,8 @@ def series_prob(a,b,finals=False,hot=None):
 
     noise=np.random.normal(0.0,SERIES_NOISE_SIGMA)
 
-    a_eff=a.base*injury_mult(a)+noise/2 + hotA
-    b_eff=b.base*injury_mult(b)-noise/2 + hotB
+    a_eff=a.base*injury_mult(a) - fatigue_penalty(a) + noise/2 + hotA
+    b_eff=b.base*injury_mult(b) - fatigue_penalty(b) - noise/2 + hotB
 
     probs=[]
     for a_home in SERIES_SCHEDULE:
@@ -305,8 +272,22 @@ def series_prob(a,b,finals=False,hot=None):
 
     return dp(0,0,0)
 
+
 def play_series(a,b,finals=False,hot=None):
-    return a if random.random() < series_prob(a,b,finals,hot) else b
+    winner = a if random.random() < series_prob(a,b,finals,hot) else b
+
+    games = np.random.randint(4,8)
+
+    # apply fatigue to BOTH teams
+    a.fatigue += games * FATIGUE_PER_GAME
+    b.fatigue += games * FATIGUE_PER_GAME
+
+    # slight recovery after series
+    a.fatigue = max(0, a.fatigue - FATIGUE_RECOVERY)
+    b.fatigue = max(0, b.fatigue - FATIGUE_RECOVERY)
+
+    return winner
+
 
 def pick_hot():
     names=[t.name for t in east.values()] + [t.name for t in west.values()]
@@ -314,54 +295,70 @@ def pick_hot():
     return {name:HOT_TEAM_BONUS for name in names[:HOT_TEAMS_PER_SIM]}
 
 # =====================================================
-# 9) RUN SIMULATIONS
+# 9) PLAY-IN
+# =====================================================
+
+def run_playin(conf_dict):
+    t7,t8,t9,t10 = conf_dict[7],conf_dict[8],conf_dict[9],conf_dict[10]
+
+    winner_7 = play_series(t7,t8)
+    loser_78 = t8 if winner_7==t7 else t7
+
+    winner_9 = play_series(t9,t10)
+    winner_8 = play_series(loser_78, winner_9)
+
+    winner_7.fatigue += PLAYIN_EXTRA_FATIGUE
+    winner_8.fatigue += PLAYIN_EXTRA_FATIGUE
+
+    return winner_7, winner_8
+
+# =====================================================
+# 10) SIMULATION
 # =====================================================
 
 all_team_names=[t.name for t in east.values()] + [t.name for t in west.values()]
 wins={name:0 for name in all_team_names}
 
 for _ in range(N_SIM):
+
+    for t in east.values(): t.fatigue = 0
+    for t in west.values(): t.fatigue = 0
+
     hot=pick_hot()
 
-    # EAST
-    e_qf=[
-        play_series(east[1],east[8],hot=hot),
-        play_series(east[4],east[5],hot=hot),
-        play_series(east[3],east[6],hot=hot),
-        play_series(east[2],east[7],hot=hot)
-    ]
-    e_sf=[
-        play_series(e_qf[0],e_qf[1],hot=hot),
-        play_series(e_qf[2],e_qf[3],hot=hot)
-    ]
+    e7,e8=run_playin(east)
+    w7,w8=run_playin(west)
+
+    e_qf=[play_series(east[1],e8,hot=hot),
+          play_series(east[4],east[5],hot=hot),
+          play_series(east[3],east[6],hot=hot),
+          play_series(east[2],e7,hot=hot)]
+
+    e_sf=[play_series(e_qf[0],e_qf[1],hot=hot),
+          play_series(e_qf[2],e_qf[3],hot=hot)]
+
     e_final=play_series(e_sf[0],e_sf[1],hot=hot)
 
-    # WEST
-    w_qf=[
-        play_series(west[1],west[8],hot=hot),
-        play_series(west[4],west[5],hot=hot),
-        play_series(west[3],west[6],hot=hot),
-        play_series(west[2],west[7],hot=hot)
-    ]
-    w_sf=[
-        play_series(w_qf[0],w_qf[1],hot=hot),
-        play_series(w_qf[2],w_qf[3],hot=hot)
-    ]
+    w_qf=[play_series(west[1],w8,hot=hot),
+          play_series(west[4],west[5],hot=hot),
+          play_series(west[3],west[6],hot=hot),
+          play_series(west[2],w7,hot=hot)]
+
+    w_sf=[play_series(w_qf[0],w_qf[1],hot=hot),
+          play_series(w_qf[2],w_qf[3],hot=hot)]
+
     w_final=play_series(w_sf[0],w_sf[1],hot=hot)
 
     champ=play_series(w_final,e_final,finals=True,hot=hot)
     wins[champ.name]+=1
 
 # =====================================================
-# 10) PROBABILITY SMOOTHING
+# 11) OUTPUT
 # =====================================================
 
-probs={t:(wins[t]+BAYES_ALPHA)/(N_SIM+BAYES_ALPHA*len(all_team_names)) 
-       for t in wins}
-
+probs={t:(wins[t]+BAYES_ALPHA)/(N_SIM+BAYES_ALPHA*len(all_team_names)) for t in wins}
 avg_p=np.mean(list(probs.values()))
 probs={t:0.70*p + 0.30*avg_p for t,p in probs.items()}
-
 probs={t:p**FLATTEN_EXPONENT for t,p in probs.items()}
 s=sum(probs.values())
 probs={t:p/s for t,p in probs.items()}
@@ -379,53 +376,27 @@ print("\n✅ FINAL CHAMPIONSHIP ODDS\n")
 print(results)
 
 # =====================================================
-# 11) CLEAN BAR CHART (NO LOGOS) + LEGEND
+# 12) VISUAL
 # =====================================================
 
-conference_colors = {"EAST": "royalblue", "WEST": "crimson"}
-
 plt.figure(figsize=(14,8))
-teams = results["Team"].tolist()
-chances = results["Championship Chance (%)"].tolist()
+teams=results["Team"].tolist()
+chances=results["Championship Chance (%)"].tolist()
 
-colors=[]
-for t in teams:
-    if t in east_df[team_col].values:
-        colors.append(conference_colors["EAST"])
-    else:
-        colors.append(conference_colors["WEST"])
+colors=["royalblue" if t in east_df[team_col].values else "crimson" for t in teams]
 
-bars = plt.bar(teams, chances, color=colors)
-plt.xticks(rotation=45, ha="right")
+bars=plt.bar(teams,chances,color=colors)
+plt.xticks(rotation=45,ha="right")
+
+for bar,p in zip(bars,chances):
+    plt.text(bar.get_x()+bar.get_width()/2,bar.get_height()+0.3,f"{p:.1f}%",ha='center')
+
+plt.legend(handles=[
+    Patch(facecolor='crimson',label='Western Conference'),
+    Patch(facecolor='royalblue',label='Eastern Conference')
+])
+
+plt.title("NBA Championship Probabilities 2025-2026 Season (As Of March 24th)")
 plt.ylabel("Championship Chance (%)")
-plt.title("NBA Championship Probabilities")
-
-# Add percentages
-for bar, pct_val in zip(bars, chances):
-    height=bar.get_height()
-    plt.text(
-        bar.get_x()+bar.get_width()/2,
-        height + 0.3,
-        f"{pct_val:.1f}%",
-        ha='center',
-        va='bottom',
-        fontsize=10
-    )
-
-# ✅ ADD LEGEND (TOP RIGHT, NO BORDERS TOUCHED)
-legend_elements = [
-    Patch(facecolor='crimson', label='Western Conference'),
-    Patch(facecolor='royalblue', label='Eastern Conference')
-]
-
-plt.legend(
-    handles=legend_elements,
-    loc='upper right',
-    fontsize=10,
-    frameon=True,
-    edgecolor='black',
-    borderpad=0.7
-)
-
 plt.tight_layout()
 plt.show()
